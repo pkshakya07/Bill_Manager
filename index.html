@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trip Expense Tracker</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
         .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
@@ -43,7 +42,7 @@
         </div>
     </div>
 
-    <button onclick="processAndSave()">Save Data & Update PDF</button>
+    <button id="save-btn" onclick="processAndSave()">Upload to Google Drive & Sheet</button>
     <div class="status" id="status-msg"></div>
 </div>
 
@@ -65,95 +64,39 @@
         }
     });
 
-    // Helper functions to save/load PDF array buffers from browser's LocalStorage
-    function getStoredPDFData(monthKey) {
-        return localStorage.getItem(monthKey); // Returns base64 string of the PDF
-    }
-
-    function storePDFData(monthKey, base64Str) {
-        localStorage.setItem(monthKey, base64Str);
-    }
-
     async function processAndSave() {
         const amount = document.getElementById('amount').value;
         const type = document.querySelector('input[name="expense-type"]:checked').value;
         const cameraInput = document.getElementById('bill-camera');
         const statusMsg = document.getElementById('status-msg');
+        const saveBtn = document.getElementById('save-btn');
 
         if (!cameraInput.files.length || !amount) {
             alert("Please take a photo and enter an amount.");
             return;
         }
 
+        saveBtn.disabled = true;
         statusMsg.style.color = "orange";
-        statusMsg.innerText = "Processing...";
+        statusMsg.innerText = "Uploading straight to Google Drive...";
 
         const now = new Date();
         const timestampStr = now.toLocaleString(); 
-        const fileTimestamp = now.toISOString().replace(/[:.]/g, "-");
+        const fileTimestamp = now.toISOString().split('T')[0]; 
         
-        // Get Current Month Name for file naming (e.g., "May_Expense")
         const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         const currentMonthName = monthNames[now.getMonth()];
-        const pdfFileName = `${currentMonthName}_Expense`;
-
-        // 1. Download Raw Image immediately
-        const imageLink = document.createElement('a');
-        imageLink.href = base64Image;
-        imageLink.download = `receipt_${type}_${fileTimestamp}.jpg`;
-        imageLink.click();
-
-        // 2. Multi-page PDF Logic
-        const { jsPDF } = window.jspdf;
-        let pdf;
         
-        const existingPDFBase64 = getStoredPDFData(pdfFileName);
+        // Formats file name explicitly by month (e.g., May_Expense_Food_2026-05-25.jpg)
+        const structuralFileName = `${currentMonthName}_Expense_${type}_${fileTimestamp}.jpg`;
 
-        if (existingPDFBase64) {
-            // Load existing PDF if it belongs to the current month
-            pdf = new jsPDF();
-            // Temporary workaround to append to an existing document instance
-            // We use the internal library state or create a fresh page if tracking locally
-            const savedData = localStorage.getItem(pdfFileName + "_pages");
-            let pages = savedData ? JSON.parse(savedData) : [];
-            
-            // Add current page details to tracking array
-            pages.push({ image: base64Image, type: type, amount: amount, time: timestampStr });
-            localStorage.setItem(pdfFileName + "_pages", JSON.stringify(pages));
-            
-            // Rebuild compiled PDF with all pages
-            pdf = new jsPDF();
-            for(let i=0; i<pages.length; i++) {
-                if(i > 0) pdf.addPage();
-                pdf.setFontSize(10);
-                pdf.text(`Receipt Date/Time: ${pages[i].time}`, 10, 10);
-                pdf.text(`Type: ${pages[i].type} | Amount: €${pages[i].amount}`, 10, 15);
-                pdf.line(10, 18, 200, 18);
-                pdf.addImage(pages[i].image, 'JPEG', 10, 25, 190, 250);
-            }
-        } else {
-            // It's a brand new month or first run! Clear old month data to save space
-            localStorage.clear(); 
-            
-            pdf = new jsPDF();
-            pdf.setFontSize(10);
-            pdf.text(`Receipt Date/Time: ${timestampStr}`, 10, 10);
-            pdf.text(`Type: ${type} | Amount: €${amount}`, 10, 15);
-            pdf.line(10, 18, 200, 18);
-            pdf.addImage(base64Image, 'JPEG', 10, 25, 190, 250);
-            
-            // Start new tracking array
-            const pages = [{ image: base64Image, type: type, amount: amount, time: timestampStr }];
-            localStorage.setItem(pdfFileName + "_pages", JSON.stringify(pages));
-        }
-
-        // Save progress string to browser storage & trigger local download
-        const pdfOutputBase64 = pdf.output('datauristring');
-        storePDFData(pdfFileName, pdfOutputBase64);
-        pdf.save(`${pdfFileName}.pdf`);
-
-        // 3. Send Data to Google Sheet
-        const payload = { type: type, amount: amount + " Euro", timestamp: timestampStr };
+        const payload = {
+            type: type,
+            amount: amount + " Euro",
+            timestamp: timestampStr,
+            imageRaw: base64Image, 
+            fileName: structuralFileName
+        };
 
         try {
             await fetch(GOOGLE_SCRIPT_URL, {
@@ -164,15 +107,18 @@
             });
 
             statusMsg.style.color = "green";
-            statusMsg.innerText = "Success! Sheet updated & master PDF updated.";
+            statusMsg.innerText = "Success! Uploaded to Drive & Sheet.";
             
             document.getElementById('amount').value = "";
             document.getElementById('preview').style.display = "none";
             cameraInput.value = "";
+            base64Image = ""; 
         } catch (error) {
             statusMsg.style.color = "red";
-            statusMsg.innerText = "Saved locally, but Sheet sync failed.";
+            statusMsg.innerText = "Upload failed. Check connections.";
             console.error(error);
+        } finally {
+            saveBtn.disabled = false;
         }
     }
 </script>
