@@ -6,54 +6,17 @@
     <title>Trip Expense Tracker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            background-color: #f4f7f6;
-            color: #333;
-        }
-        .container {
-            max-width: 500px;
-            margin: auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
+        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
         h2 { text-align: center; color: #2c3e50; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="number"], select, input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            box-sizing: border-box;
-        }
+        input[type="number"], select, input[type="file"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
         .radio-group { display: flex; gap: 20px; margin-top: 5px; }
-        button {
-            width: 100%;
-            padding: 12px;
-            background-color: #27ae60;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-            margin-top: 10px;
-        }
+        button { width: 100%; padding: 12px; background-color: #27ae60; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 10px; }
         button:hover { background-color: #219150; }
-        #preview {
-            width: 100%;
-            margin-top: 15px;
-            border-radius: 5px;
-            display: none;
-        }
-        .status {
-            text-align: center;
-            margin-top: 10px;
-            font-weight: bold;
-        }
+        #preview { width: 100%; margin-top: 15px; border-radius: 5px; display: none; }
+        .status { text-align: center; margin-top: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -80,8 +43,7 @@
         </div>
     </div>
 
-    <button onclick="processAndSave()">Save Data & Files</button>
-    
+    <button onclick="processAndSave()">Save Data & Update PDF</button>
     <div class="status" id="status-msg"></div>
 </div>
 
@@ -89,23 +51,28 @@
     // Paste your Google Web App URL between the quotes below
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxlWIMSMP-XK6skjtmyJ7MfMJQxZF-1MxwRa6-3Ecx6WOqsB-ml9Hj8QJW1EjdhLxH0/exec"; 
     let base64Image = "";
-    let fileNameString = "";
 
-    // Handle Image Preview and extraction
     document.getElementById('bill-camera').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (file) {
-            fileNameString = file.name;
             const reader = new FileReader();
             reader.onload = function(event) {
-                const img = document.getElementById('preview');
-                img.src = event.target.result;
-                img.style.display = "block";
+                document.getElementById('preview').src = event.target.result;
+                document.getElementById('preview').style.display = "block";
                 base64Image = event.target.result; 
             };
             reader.readAsDataURL(file);
         }
     });
+
+    // Helper functions to save/load PDF array buffers from browser's LocalStorage
+    function getStoredPDFData(monthKey) {
+        return localStorage.getItem(monthKey); // Returns base64 string of the PDF
+    }
+
+    function storePDFData(monthKey, base64Str) {
+        localStorage.setItem(monthKey, base64Str);
+    }
 
     async function processAndSave() {
         const amount = document.getElementById('amount').value;
@@ -119,40 +86,74 @@
         }
 
         statusMsg.style.color = "orange";
-        statusMsg.innerText = "Processing & Uploading...";
+        statusMsg.innerText = "Processing...";
 
-        // 1. Generate local current timestamp
         const now = new Date();
         const timestampStr = now.toLocaleString(); 
         const fileTimestamp = now.toISOString().replace(/[:.]/g, "-");
+        
+        // Get Current Month Name for file naming (e.g., "May_Expense")
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const currentMonthName = monthNames[now.getMonth()];
+        const pdfFileName = `${currentMonthName}_Expense`;
 
-        // 2. Trigger download of the Raw Image to Phone Storage
-        const file = cameraInput.files[0];
+        // 1. Download Raw Image immediately
         const imageLink = document.createElement('a');
         imageLink.href = base64Image;
         imageLink.download = `receipt_${type}_${fileTimestamp}.jpg`;
         imageLink.click();
 
-        // 3. Generate and download PDF with Header Timestamp
+        // 2. Multi-page PDF Logic
         const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF();
+        let pdf;
         
-        // Add Header Text (Date and Time)
-        pdf.setFontSize(10);
-        pdf.text(`Receipt Date/Time: ${timestampStr}`, 10, 10);
-        pdf.text(`Type: ${type} | Amount: €${amount}`, 10, 15);
-        pdf.line(10, 18, 200, 18); 
+        const existingPDFBase64 = getStoredPDFData(pdfFileName);
 
-        // Add Image to PDF
-        pdf.addImage(base64Image, 'JPEG', 10, 25, 190, 250);
-        pdf.save(`receipt_${type}_${fileTimestamp}.pdf`);
+        if (existingPDFBase64) {
+            // Load existing PDF if it belongs to the current month
+            pdf = new jsPDF();
+            // Temporary workaround to append to an existing document instance
+            // We use the internal library state or create a fresh page if tracking locally
+            const savedData = localStorage.getItem(pdfFileName + "_pages");
+            let pages = savedData ? JSON.parse(savedData) : [];
+            
+            // Add current page details to tracking array
+            pages.push({ image: base64Image, type: type, amount: amount, time: timestampStr });
+            localStorage.setItem(pdfFileName + "_pages", JSON.stringify(pages));
+            
+            // Rebuild compiled PDF with all pages
+            pdf = new jsPDF();
+            for(let i=0; i<pages.length; i++) {
+                if(i > 0) pdf.addPage();
+                pdf.setFontSize(10);
+                pdf.text(`Receipt Date/Time: ${pages[i].time}`, 10, 10);
+                pdf.text(`Type: ${pages[i].type} | Amount: €${pages[i].amount}`, 10, 15);
+                pdf.line(10, 18, 200, 18);
+                pdf.addImage(pages[i].image, 'JPEG', 10, 25, 190, 250);
+            }
+        } else {
+            // It's a brand new month or first run! Clear old month data to save space
+            localStorage.clear(); 
+            
+            pdf = new jsPDF();
+            pdf.setFontSize(10);
+            pdf.text(`Receipt Date/Time: ${timestampStr}`, 10, 10);
+            pdf.text(`Type: ${type} | Amount: €${amount}`, 10, 15);
+            pdf.line(10, 18, 200, 18);
+            pdf.addImage(base64Image, 'JPEG', 10, 25, 190, 250);
+            
+            // Start new tracking array
+            const pages = [{ image: base64Image, type: type, amount: amount, time: timestampStr }];
+            localStorage.setItem(pdfFileName + "_pages", JSON.stringify(pages));
+        }
 
-        // 4. Send Data to Google Sheet
-        const payload = {
-            type: type,
-            amount: amount + " Euro",
-            timestamp: timestampStr
-        };
+        // Save progress string to browser storage & trigger local download
+        const pdfOutputBase64 = pdf.output('datauristring');
+        storePDFData(pdfFileName, pdfOutputBase64);
+        pdf.save(`${pdfFileName}.pdf`);
+
+        // 3. Send Data to Google Sheet
+        const payload = { type: type, amount: amount + " Euro", timestamp: timestampStr };
 
         try {
             await fetch(GOOGLE_SCRIPT_URL, {
@@ -163,9 +164,8 @@
             });
 
             statusMsg.style.color = "green";
-            statusMsg.innerText = "Success! Sheet updated & files saved.";
+            statusMsg.innerText = "Success! Sheet updated & master PDF updated.";
             
-            // Clear Form
             document.getElementById('amount').value = "";
             document.getElementById('preview').style.display = "none";
             cameraInput.value = "";
